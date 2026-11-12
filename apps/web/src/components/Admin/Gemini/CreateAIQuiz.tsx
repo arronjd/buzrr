@@ -32,7 +32,7 @@ import {
 
 type FormValues = z.infer<typeof createAiQuizSchema>;
 
-const MAX_QUESTIONS = 15;
+const MAX_QUESTIONS = 50;
 const DEFAULTS: FormValues = {
   title: "",
   description: "",
