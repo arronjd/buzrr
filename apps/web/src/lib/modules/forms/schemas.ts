@@ -105,5 +105,5 @@ export const createSpaceSchema = z.object({
 
 export const generateQuestionsSchema = z.object({
   prompt: z.string().min(3, "Describe what you want generated").max(2000),
-  count: z.coerce.number().int().min(1).max(30),
+  count: z.coerce.number().int().min(1).max(50),
 });
