@@ -1,41 +1,23 @@
-# Buzrr — Do Drop Inn / docker-01 (192.168.20.11)
+
+# Buzrr - Do Drop Inn
+# Docker host: docker-01 / 192.168.20.11
+# Internal HTTPS via Nginx Proxy Manager
+# Database and Redis use local Docker volumes.
 #
-#     docker compose up -d        # → https://buzrr.myhomelab.vip via NPM
-#
-# That builds and starts Postgres, Redis, database migrations, the API (:3001)
-# and the web app (:3000). Sign-in is local email + password, images are kept
-# on a Docker volume, and an auth secret is generated on first boot — nothing
-# here needs the internet once the images are built. Configure it with a `.env`
-# file next to this one (every knob is listed in `.env.example`).
-#
-# Optional extras:
-#
-#     docker compose --profile ai up -d       # Knowledge Spaces (apps/ai)
-#     docker compose --profile ollama up -d   # a local model server
-#
-# Serving other machines (Do Drop Inn LAN): set PUBLIC_WEB_URL / PUBLIC_API_URL
-# to addresses browsers can reach, then `docker compose up -d --build` — the
-# API URL is compiled into the web bundle.
-#
-# Developing Buzrr instead? `yarn setup` + `yarn dev` run the apps on your
-# machine and use only the `postgres` and `redis` services from this file.
-#
-#     docker compose down         # stop (data is kept in named volumes)
-#     docker compose down -v      # stop and wipe everything
+# IMPORTANT:
+# Set BUZRR_DB_PASSWORD in Portainer environment variables.
+# Keep this file complete, including the volumes section at the bottom.
 
 x-database-env: &database-env
   DATABASE_URL: postgresql://buzrr:${BUZRR_DB_PASSWORD:?Set BUZRR_DB_PASSWORD in Portainer}@postgres:5432/buzrr
   DIRECT_URL: postgresql://buzrr:${BUZRR_DB_PASSWORD:?Set BUZRR_DB_PASSWORD in Portainer}@postgres:5432/buzrr
 
-# Keep secrets in Portainer environment variables; never commit real passwords to GitHub.
-# The AI containers take their model settings (GEMINI_API_KEY or LLM_*, plus
-# AI_GENERATION_MODEL / AI_EMBEDDING_MODEL) from env files — `.env` here, then
-# apps/ai/.env — so these are only the values that must point inside Docker.
 x-ai-env-files: &ai-env-files
   - path: .env
     required: false
   - path: apps/ai/.env
     required: false
+
 x-ai-env: &ai-env
   AI_DATABASE_URL: postgresql://buzrr:${BUZRR_DB_PASSWORD:?Set BUZRR_DB_PASSWORD in Portainer}@postgres:5432/buzrr
   REDIS_URL: redis://redis:6379
@@ -43,6 +25,7 @@ x-ai-env: &ai-env
   AI_BUZRR_API_URL: ${AI_BUZRR_API_URL:-http://server:3001}
 
 services:
+
   postgres:
     image: pgvector/pgvector:pg16
     container_name: buzrr-postgres
@@ -74,8 +57,6 @@ services:
       retries: 10
       start_period: 3s
 
-  # Mints the shared BETTER_AUTH_SECRET once, into a volume, unless you set
-  # one in .env. Web, API and AI all read the same file — they must agree.
   auth-secret:
     image: redis:7-alpine
     restart: "no"
@@ -93,9 +74,6 @@ services:
     image: buzrr-server
     restart: "no"
     working_dir: /app/packages/prisma
-    # Applies committed migrations (creating and baselining the schema on a
-    # fresh database — see scripts/deploy.mjs), then makes sure the duel pool
-    # isn't empty (idempotent starter pack).
     command:
       - sh
       - -c
@@ -109,7 +87,6 @@ services:
   server:
     image: buzrr-server
     restart: unless-stopped
-    # Prefer BETTER_AUTH_SECRET from .env; fall back to the generated one.
     command:
       - sh
       - -c
@@ -120,9 +97,155 @@ services:
       PORT: "3001"
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-}
       WEB_ORIGIN: ${PUBLIC_WEB_URL:-https://buzrr.myhomelab.vip}
-      # Billing is a hosted-service feature; self-hosted means Pro limits.
       BILLING: "OFF"
-      # Question images: local disk (the volume below) unless you choose
-      # cloudinary or s3 — see .env.example.
       STORAGE_DRIVER: ${STORAGE_DRIVER:-local}
       STORAGE_LOCAL_DIR: /data/uploads
+      STORAGE_PUBLIC_URL: ${PUBLIC_API_URL:-https://buzrr-api.myhomelab.vip}/uploads
+      CLOUDINARY_CLOUD_NAME: ${CLOUDINARY_CLOUD_NAME:-}
+      CLOUDINARY_API_KEY: ${CLOUDINARY_API_KEY:-}
+      CLOUDINARY_API_SECRET: ${CLOUDINARY_API_SECRET:-}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_REGION: ${S3_REGION:-}
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+      S3_PUBLIC_URL: ${S3_PUBLIC_URL:-}
+      LLM_PROVIDER: ${LLM_PROVIDER:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    ports:
+      - "192.168.20.11:3101:3001"
+    volumes:
+      - buzrr-uploads:/data/uploads
+      - buzrr-secrets:/run/buzrr:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      auth-secret:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        PUBLIC_API_URL: ${PUBLIC_API_URL:-https://buzrr-api.myhomelab.vip}
+        PUBLIC_WEB_URL: ${PUBLIC_WEB_URL:-https://buzrr.myhomelab.vip}
+        PUBLIC_AI_API_URL: ${PUBLIC_AI_API_URL:-}
+    image: buzrr-web
+    restart: unless-stopped
+    command:
+      - sh
+      - -c
+      - 'export BETTER_AUTH_SECRET="$${BETTER_AUTH_SECRET:-$$(cat /run/buzrr/auth-secret)}" && exec node /app/apps/web/server.js'
+    environment:
+      <<: *database-env
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-}
+      BETTER_AUTH_URL: ${PUBLIC_WEB_URL:-https://buzrr.myhomelab.vip}
+      TRUSTED_ORIGINS: ${PUBLIC_WEB_URL:-https://buzrr.myhomelab.vip},${PUBLIC_API_URL:-https://buzrr-api.myhomelab.vip}
+      AUTH_EMAIL_PASSWORD: ${AUTH_EMAIL_PASSWORD:-ON}
+      AUTH_EMAIL_SIGNUP: ${AUTH_EMAIL_SIGNUP:-ON}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      API_INTERNAL_URL: http://server:3001
+      RATELIMIT: "OFF"
+      LANDING_VIDEO_URL: ${LANDING_VIDEO_URL:-}
+    ports:
+      - "192.168.20.11:3100:3000"
+    volumes:
+      - buzrr-secrets:/run/buzrr:ro
+    depends_on:
+      server:
+        condition: service_started
+
+  # Optional AI Knowledge Spaces
+  # Enable only after the initial installation works.
+
+  ai-migrate:
+    profiles: ["ai"]
+    build:
+      context: ./apps/ai
+    image: buzrr-ai
+    restart: "no"
+    command: ["alembic", "upgrade", "head"]
+    env_file: *ai-env-files
+    environment:
+      <<: *ai-env
+      BETTER_AUTH_SECRET: migrations-do-not-verify-tokens
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  ai:
+    profiles: ["ai"]
+    image: buzrr-ai
+    container_name: buzrr-ai
+    restart: unless-stopped
+    command:
+      - sh
+      - -c
+      - 'export BETTER_AUTH_SECRET="$${BETTER_AUTH_SECRET:-$$(cat /run/buzrr/auth-secret)}" && exec uvicorn buzrr_ai.main:app --host 0.0.0.0 --port 3002'
+    env_file: *ai-env-files
+    environment:
+      <<: *ai-env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "3002:3002"
+    volumes:
+      - buzrr-secrets:/run/buzrr:ro
+    depends_on:
+      ai-migrate:
+        condition: service_completed_successfully
+      auth-secret:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  ai-worker:
+    profiles: ["ai"]
+    image: buzrr-ai
+    container_name: buzrr-ai-worker
+    restart: unless-stopped
+    command:
+      - sh
+      - -c
+      - 'export BETTER_AUTH_SECRET="$${BETTER_AUTH_SECRET:-$$(cat /run/buzrr/auth-secret)}" && exec arq buzrr_ai.worker.WorkerSettings'
+    env_file: *ai-env-files
+    environment:
+      <<: *ai-env
+    volumes:
+      - buzrr-secrets:/run/buzrr:ro
+    depends_on:
+      ai-migrate:
+        condition: service_completed_successfully
+      auth-secret:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  # Optional local Ollama AI server.
+  # Not enabled during the initial deployment.
+
+  ollama:
+    profiles: ["ollama"]
+    image: ollama/ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - buzrr-ollama:/root/.ollama
+
+# IMPORTANT: Keep this entire section.
+# Without it, Docker Compose will report undefined volumes.
+
+volumes:
+  buzrr-postgres-data:
+  buzrr-redis-data:
+  buzrr-uploads:
+  buzrr-secrets:
+  buzrr-ollama:
