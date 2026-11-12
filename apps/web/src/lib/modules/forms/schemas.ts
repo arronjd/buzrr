@@ -13,7 +13,7 @@ export const createQuizSchema = z.object({
 export const createAiQuizSchema = z.object({
   title: z.string().min(1),
   description: z.string().min(1),
-  questions: z.coerce.number().int().min(1).max(30),
+  questions: z.coerce.number().int().min(1).max(50),
   time: z.coerce
     .number()
     .int("Use whole seconds")
