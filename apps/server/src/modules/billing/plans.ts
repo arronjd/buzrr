@@ -22,7 +22,7 @@ export const PLAN_LIMITS: Record<PlanId, PlanLimits> = {
   pro: {
     maxPlayers: 250,
     maxQuizzes: null,
-    ai: { kind: "weekly", amount: 10 },
+    ai: { kind: "weekly", amount: 1000 },
   },
 };
 
