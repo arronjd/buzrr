@@ -13,7 +13,7 @@ import {
 } from "@/components/Billing/UpgradePrompt";
 
 const MIN_COUNT = 1;
-const MAX_COUNT = 15;
+const MAX_COUNT = 50;
 
 const QUESTION_TYPES = [
   { value: "MCQ", label: "Multiple choice" },
